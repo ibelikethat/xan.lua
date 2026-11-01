@@ -1,0 +1,1263 @@
+--// Xyz PvP — Xanax \\--
+--// Built by Xanax & Kafex — https://discord.gg/x4n \\--
+--// LogoID: FILL with your uploaded decal (clean X monogram in purple/pink gradient, three-eye mark bottom-right). Default below is a placeholder asset. \\--
+
+local VANTIX_URL = "https://raw.githubusercontent.com/Snipez-Dev/Vantix/refs/heads/main/VantixUI6"
+local VantixUI = loadstring(game:HttpGet(VANTIX_URL))()
+
+local Players          = game:GetService("Players")
+local RunService       = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace        = game:GetService("Workspace")
+local RepStorage       = game:GetService("ReplicatedStorage")
+local Lighting         = game:GetService("Lighting")
+local HttpService      = game:GetService("HttpService")
+local Stats            = game:GetService("Stats")
+
+local LP     = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+local Mouse  = LP:GetMouse()
+
+local hookmetamethod   = hookmetamethod
+local hookfunction     = hookfunction or replaceclosure
+local getnamecallmethod= getnamecallmethod or function() return "" end
+local checkcaller      = checkcaller or function() return false end
+local newcclosure      = newcclosure or function(f) return f end
+local writefile        = writefile
+local readfile         = readfile
+local isfile           = isfile
+local hasDrawing       = (typeof(Drawing) == "table") or (Drawing and Drawing.new) and true or false
+
+local BRAND = {
+    Name    = "Xanax",
+    Sub     = "Xanax Crisper",
+    Authors = "Built by Xanax & Kafex",
+    Discord = "https://discord.gg/x4n",
+    DiscordTag = "discord.gg/x4n",
+    Accent  = Color3.fromRGB(170, 110, 255),
+    Pink    = Color3.fromRGB(255, 90, 200),
+    LogoID  = 110034487018208,
+}
+
+----------------------------------------------------------------
+-- CONFIG + persistence
+----------------------------------------------------------------
+local CFG = {
+    HitboxEnabled=false, HitboxPart="Head", HitboxSize=10,
+    HitboxTrans=0.55, HitboxVisual=true, HitboxMaxDist=10000, HitboxIgnoreDist=true,
+
+    ESPEnabled=false, ESPTracers=true, ESPHealthBar=true, ESPNames=true,
+    ESPCorners=true, ESPGlow=true, ESPArrows=true, ESPMaxDist=5000, ESPTeamCheck=false,
+
+    SilentEnabled=false, SilentFOV=120, SilentPart="Head",
+    SilentWallcheck=false, SilentHoldRMB=true, SilentShowFOV=true,
+    SilentFallbackRoot=true,
+
+    AimbotEnabled=false, AimbotPart="Head", AimbotSmooth=0.35,
+    AimbotFOV=200, AimbotWallcheck=false, AimbotHoldKey=true,
+
+    FlyEnabled=false, FlySpeed=60,
+    SpinEnabled=false, SpinSpeed=40,
+    AntiAimEnabled=false, AntiAimMode="Backwards",
+    WallbangEnabled=false,
+    AutoPeekEnabled=false, AutoPeekSpeed=25,
+    FakeLagEnabled=false, FakeLagRate=4,
+    PredictionEnabled=false, PredictionAmount=0.15,
+    ResolverEnabled=false,
+    AntiStompEnabled=false,
+    AirStrafeEnabled=false, AirStrafeForce=70,
+    AntiVelocity=false,
+
+    OrbitEnabled=false, OrbitRadius=12, OrbitSpeed=180, OrbitHeight=0,
+    OrbitBindKey=Enum.KeyCode.F, OrbitMaxGrabDist=60,
+
+    LootRange=25, LootCooldown=0.25,
+    LootUseRemote=true, LootStripTools=true, LootNotify=true,
+    LootKey=Enum.KeyCode.Three,
+
+    IgnoreUserIds={},
+}
+local CFG_FILE = "xanax_xyz.json"
+local function saveCfg()
+    if not writefile then return end
+    pcall(function()
+        local save = {}
+        for k,v in pairs(CFG) do
+            local t=typeof(v)
+            if t=="number" or t=="string" or t=="boolean" or t=="table" then save[k]=v
+            elseif t=="EnumItem" then save[k]={__enum=true, type=tostring(v.EnumType), name=v.Name} end
+        end
+        writefile(CFG_FILE, HttpService:JSONEncode(save))
+    end)
+end
+local function loadCfg()
+    if not (readfile and isfile and isfile(CFG_FILE)) then return end
+    pcall(function()
+        local data = HttpService:JSONDecode(readfile(CFG_FILE))
+        for k,v in pairs(data) do
+            if CFG[k] ~= nil then
+                if typeof(v)=="table" and v.__enum and typeof(CFG[k])=="EnumItem" then
+                    local okE, enum = pcall(function()
+                        local parts = {}
+                        for part in string.gmatch(v.type, "[^%.]+") do table.insert(parts, part) end
+                        local cur = Enum
+                        for i=2,#parts do cur = cur[parts[i]] end
+                        return cur[v.name]
+                    end)
+                    if okE and enum then CFG[k]=enum end
+                elseif typeof(CFG[k]) == typeof(v) then
+                    CFG[k]=v
+                end
+            end
+        end
+    end)
+end
+loadCfg()
+
+local LIVE = { conns={}, drawings={}, hooks={}, unloaded=false, instances={} }
+local function trackConn(c) table.insert(LIVE.conns, c); return c end
+local function trackDraw(d) if d then table.insert(LIVE.drawings, d) end; return d end
+local function trackInst(i) if i then table.insert(LIVE.instances, i) end; return i end
+
+----------------------------------------------------------------
+-- UTIL
+----------------------------------------------------------------
+local function isFriend(plr)
+    if plr == LP then return true end
+    for _, id in ipairs(CFG.IgnoreUserIds) do if plr.UserId == id then return true end end
+    if CFG.ESPTeamCheck and plr.Team and LP.Team and plr.Team == LP.Team then return true end
+    return false
+end
+local function alive(plr)
+    local c = plr.Character; if not c then return nil end
+    local hrp = c:FindFirstChild("HumanoidRootPart")
+    local hum = c:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum or hum.Health <= 0 then return nil end
+    return c, hrp, hum
+end
+local function myChar()
+    local c = LP.Character; if not c then return nil end
+    local hrp = c:FindFirstChild("HumanoidRootPart")
+    local hum = c:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum then return nil end
+    return c, hrp, hum
+end
+local function distToPart(part)
+    local root = LP.Character and LP.Character:FindFirstChild("HumanoidRootPart")
+    if root then return (root.Position - part.Position).Magnitude end
+    return (Camera.CFrame.Position - part.Position).Magnitude
+end
+local function worldToScreen(pos)
+    local v, on = Camera:WorldToViewportPoint(pos)
+    return Vector2.new(v.X, v.Y), on, v.Z
+end
+local function pickTargetPart(char, preferred, allowRootFallback)
+    if not char then return nil end
+    local p = char:FindFirstChild(preferred)
+    if p and p:IsA("BasePart") then return p end
+    local head = char:FindFirstChild("Head")
+    if head and head:IsA("BasePart") then return head end
+    if allowRootFallback ~= false then
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hrp and hrp:IsA("BasePart") then return hrp end
+    end
+    return nil
+end
+
+----------------------------------------------------------------
+-- HITBOX
+----------------------------------------------------------------
+local hbState = {}
+local function captureOrig(part)
+    return { Size=part.Size, Transparency=part.Transparency, Material=part.Material,
+             CanCollide=part.CanCollide, Massless=part.Massless, Color=part.Color }
+end
+local function restorePart(record)
+    if not record then return end
+    local part = record.part
+    if part and part.Parent then
+        pcall(function()
+            part.Size=record.orig.Size; part.Transparency=record.orig.Transparency
+            part.Material=record.orig.Material; part.CanCollide=record.orig.CanCollide
+            part.Massless=record.orig.Massless; part.Color=record.orig.Color
+        end)
+    end
+end
+local function restoreAll() for p,rec in pairs(hbState) do restorePart(rec); hbState[p]=nil end end
+local function restoreOne(plr) local rec=hbState[plr]; if rec then restorePart(rec); hbState[plr]=nil end end
+local function applyHitbox(plr)
+    local char = alive(plr); if not char then return end
+    local target = char:FindFirstChild(CFG.HitboxPart) or char:FindFirstChild("HumanoidRootPart")
+    if not target or not target:IsA("BasePart") then return end
+    if not CFG.HitboxIgnoreDist and distToPart(target) > CFG.HitboxMaxDist then restoreOne(plr); return end
+    local rec = hbState[plr]
+    if not rec or rec.part ~= target then
+        if rec then restorePart(rec) end
+        rec = { part=target, orig=captureOrig(target) }; hbState[plr]=rec
+    end
+    local sz = math.clamp(CFG.HitboxSize, 1, 50)
+    pcall(function()
+        target.Size=Vector3.new(sz,sz,sz)
+        target.Transparency = CFG.HitboxVisual and CFG.HitboxTrans or 1
+        target.Material=Enum.Material.ForceField
+        target.CanCollide=false; target.Massless=true
+        target.Color=BRAND.Pink
+    end)
+end
+trackConn(RunService.Heartbeat:Connect(function()
+    if LIVE.unloaded then return end
+    if not CFG.HitboxEnabled then
+        if next(hbState) then restoreAll() end; return
+    end
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if not isFriend(plr) then
+            if alive(plr) then pcall(applyHitbox, plr) else restoreOne(plr) end
+        end
+    end
+end))
+local function onPlayerAdded(plr)
+    trackConn(plr.CharacterAdded:Connect(function() hbState[plr]=nil end))
+    trackConn(plr.CharacterRemoving:Connect(function() restoreOne(plr) end))
+end
+for _, p in ipairs(Players:GetPlayers()) do if p ~= LP then onPlayerAdded(p) end end
+trackConn(Players.PlayerAdded:Connect(onPlayerAdded))
+trackConn(Players.PlayerRemoving:Connect(restoreOne))
+trackConn(LP.CharacterAdded:Connect(function() restoreAll() end))
+
+----------------------------------------------------------------
+-- ESP (drawing)
+----------------------------------------------------------------
+local espState = {}
+local function newDraw(k, p)
+    if not hasDrawing then return nil end
+    local ok, d = pcall(Drawing.new, k)
+    if not ok or not d then return nil end
+    for a,b in pairs(p) do pcall(function() d[a]=b end) end
+    trackDraw(d); return d
+end
+local function mkEsp(plr)
+    if not hasDrawing then return end
+    local accent, pink = BRAND.Accent, BRAND.Pink
+    local s = {}
+    s.glow   = newDraw("Square",{Thickness=6,Filled=false,Color=accent,Transparency=0.85,Visible=false,ZIndex=1})
+    s.boxOut = newDraw("Square",{Thickness=3,Filled=false,Color=Color3.new(0,0,0),Transparency=1,Visible=false,ZIndex=2})
+    s.box    = newDraw("Square",{Thickness=1,Filled=false,Color=accent,Transparency=1,Visible=false,ZIndex=3})
+    for _, k in ipairs({"c1a","c1b","c2a","c2b","c3a","c3b","c4a","c4b"}) do
+        s[k] = newDraw("Line",{Thickness=2,Color=pink,Visible=false,Transparency=1,ZIndex=4})
+    end
+    s.name   = newDraw("Text",{Size=14,Center=true,Outline=true,Color=Color3.new(1,1,1),Visible=false,Font=2,ZIndex=5})
+    s.dist   = newDraw("Text",{Size=12,Center=true,Outline=true,Color=accent,Visible=false,Font=2,ZIndex=5})
+    s.tracer = newDraw("Line",{Thickness=1,Color=accent,Transparency=0.7,Visible=false,ZIndex=2})
+    s.hpBg   = newDraw("Square",{Thickness=1,Filled=true,Color=Color3.fromRGB(10,10,15),Transparency=0.85,Visible=false,ZIndex=3})
+    s.hpBar  = newDraw("Square",{Thickness=1,Filled=true,Color=Color3.fromRGB(130,255,210),Transparency=1,Visible=false,ZIndex=4})
+    s.arrA   = newDraw("Line",{Thickness=3,Color=pink,Transparency=1,Visible=false,ZIndex=5})
+    s.arrB   = newDraw("Line",{Thickness=3,Color=pink,Transparency=1,Visible=false,ZIndex=5})
+    s.arrC   = newDraw("Line",{Thickness=3,Color=pink,Transparency=1,Visible=false,ZIndex=5})
+    espState[plr] = s
+end
+local function killEsp(plr)
+    local s=espState[plr]; if not s then return end
+    for _,v in pairs(s) do pcall(function() v:Remove() end) end
+    espState[plr]=nil
+end
+local function hideEsp(s)
+    if not s then return end
+    for _,v in pairs(s) do pcall(function() v.Visible=false end) end
+end
+local function drawOffscreenArrow(s, screenPos)
+    local vp=Camera.ViewportSize; local cx,cy=vp.X/2,vp.Y/2
+    local dx,dy=screenPos.X-cx,screenPos.Y-cy
+    local len=math.sqrt(dx*dx+dy*dy); if len<1 then len=1 end
+    local nx,ny=dx/len,dy/len; local r=math.min(vp.X,vp.Y)*0.35
+    local tip=Vector2.new(cx+nx*r,cy+ny*r)
+    local px,py=-ny,nx; local sz=12
+    local bL=Vector2.new(tip.X-nx*sz+px*sz*0.6,tip.Y-ny*sz+py*sz*0.6)
+    local bR=Vector2.new(tip.X-nx*sz-px*sz*0.6,tip.Y-ny*sz-py*sz*0.6)
+    s.arrA.From,s.arrA.To,s.arrA.Visible=tip,bL,true
+    s.arrB.From,s.arrB.To,s.arrB.Visible=tip,bR,true
+    s.arrC.From,s.arrC.To,s.arrC.Visible=bL,bR,true
+end
+local function hideArrow(s) s.arrA.Visible,s.arrB.Visible,s.arrC.Visible=false,false,false end
+local function updateEspFor(plr)
+    if not hasDrawing then return end
+    if not espState[plr] then mkEsp(plr) end
+    local s=espState[plr]; if not s then return end
+    if not CFG.ESPEnabled or isFriend(plr) then hideEsp(s); return end
+    local char,hrp,hum=alive(plr); if not char then hideEsp(s); return end
+    local head=char:FindFirstChild("Head") or hrp
+    local dist=(Camera.CFrame.Position-hrp.Position).Magnitude
+    if dist>CFG.ESPMaxDist then hideEsp(s); return end
+    local top,onT=worldToScreen(head.Position+Vector3.new(0,0.6,0))
+    local bot,onB=worldToScreen(hrp.Position-Vector3.new(0,3,0))
+    local cs=worldToScreen(hrp.Position)
+    if not (onT and onB) then
+        for k,v in pairs(s) do
+            if k~="arrA" and k~="arrB" and k~="arrC" then pcall(function() v.Visible=false end) end
+        end
+        if CFG.ESPArrows then drawOffscreenArrow(s,cs) else hideArrow(s) end
+        return
+    end
+    hideArrow(s)
+    local h=math.abs(bot.Y-top.Y); local w=h*0.5
+    local pos=Vector2.new(top.X-w/2,top.Y)
+    s.box.Size,s.box.Position,s.box.Visible=Vector2.new(w,h),pos,true
+    s.boxOut.Size,s.boxOut.Position,s.boxOut.Visible=s.box.Size,s.box.Position,true
+    if CFG.ESPGlow then
+        s.glow.Size,s.glow.Position,s.glow.Visible=Vector2.new(w+4,h+4),Vector2.new(pos.X-2,pos.Y-2),true
+    else s.glow.Visible=false end
+    if CFG.ESPCorners then
+        local cl=math.min(h,w)*0.22
+        local x1,y1,x2,y2=pos.X,pos.Y,pos.X+w,pos.Y+h
+        s.c1a.From,s.c1a.To,s.c1a.Visible=Vector2.new(x1,y1),Vector2.new(x1+cl,y1),true
+        s.c1b.From,s.c1b.To,s.c1b.Visible=Vector2.new(x1,y1),Vector2.new(x1,y1+cl),true
+        s.c2a.From,s.c2a.To,s.c2a.Visible=Vector2.new(x2,y1),Vector2.new(x2-cl,y1),true
+        s.c2b.From,s.c2b.To,s.c2b.Visible=Vector2.new(x2,y1),Vector2.new(x2,y1+cl),true
+        s.c3a.From,s.c3a.To,s.c3a.Visible=Vector2.new(x1,y2),Vector2.new(x1+cl,y2),true
+        s.c3b.From,s.c3b.To,s.c3b.Visible=Vector2.new(x1,y2),Vector2.new(x1,y2-cl),true
+        s.c4a.From,s.c4a.To,s.c4a.Visible=Vector2.new(x2,y2),Vector2.new(x2-cl,y2),true
+        s.c4b.From,s.c4b.To,s.c4b.Visible=Vector2.new(x2,y2),Vector2.new(x2,y2-cl),true
+    else
+        for _,k in ipairs({"c1a","c1b","c2a","c2b","c3a","c3b","c4a","c4b"}) do s[k].Visible=false end
+    end
+    if CFG.ESPNames then
+        s.name.Text,s.name.Position,s.name.Visible=plr.DisplayName,Vector2.new(top.X,top.Y-18),true
+        s.dist.Text,s.dist.Position,s.dist.Visible=string.format("%dm",math.floor(dist)),Vector2.new(top.X,bot.Y+2),true
+    else s.name.Visible,s.dist.Visible=false,false end
+    if CFG.ESPHealthBar then
+        local ratio=math.clamp(hum.Health/math.max(hum.MaxHealth,1),0,1)
+        local hpH=h*ratio; local bgX=pos.X-7
+        s.hpBg.Position,s.hpBg.Size,s.hpBg.Visible=Vector2.new(bgX,pos.Y),Vector2.new(4,h),true
+        s.hpBar.Position,s.hpBar.Size,s.hpBar.Visible=Vector2.new(bgX+1,pos.Y+(h-hpH)+1),Vector2.new(2,math.max(hpH-2,0)),true
+        s.hpBar.Color=Color3.fromHSV(ratio*0.33,0.85,1)
+    else s.hpBg.Visible,s.hpBar.Visible=false,false end
+    if CFG.ESPTracers then
+        s.tracer.From=Vector2.new(Camera.ViewportSize.X/2,Camera.ViewportSize.Y)
+        s.tracer.To,s.tracer.Visible=Vector2.new(top.X,bot.Y),true
+    else s.tracer.Visible=false end
+end
+trackConn(RunService.RenderStepped:Connect(function()
+    if LIVE.unloaded or not hasDrawing then return end
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LP then pcall(updateEspFor, plr) end
+    end
+end))
+trackConn(Players.PlayerRemoving:Connect(killEsp))
+
+----------------------------------------------------------------
+-- SILENT + AIMBOT (shared target engine, hardened)
+----------------------------------------------------------------
+local silentHeld, aimbotHeld = false, false
+trackConn(UserInputService.InputBegan:Connect(function(i, gp)
+    if gp then return end
+    if i.UserInputType == Enum.UserInputType.MouseButton2 then silentHeld=true; aimbotHeld=true end
+end))
+trackConn(UserInputService.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton2 then silentHeld=false; aimbotHeld=false end
+end))
+local function silentActive() if not CFG.SilentEnabled or LIVE.unloaded then return false end
+    if CFG.SilentHoldRMB then return silentHeld end; return true end
+local function aimbotActive() if not CFG.AimbotEnabled or LIVE.unloaded then return false end
+    if CFG.AimbotHoldKey then return aimbotHeld end; return true end
+
+local function visCheck(part, char)
+    if CFG.WallbangEnabled then return true end
+    local rp=RaycastParams.new(); rp.FilterType=Enum.RaycastFilterType.Exclude
+    rp.FilterDescendantsInstances={LP.Character, Camera}; rp.IgnoreWater=true
+    local origin=Camera.CFrame.Position
+    local r=Workspace:Raycast(origin, (part.Position-origin), rp)
+    if not r or not r.Instance then return true end
+    return r.Instance:IsDescendantOf(char)
+end
+local function resolverTarget(char, basePart)
+    if not CFG.ResolverEnabled then return basePart end
+    local head = char:FindFirstChild("Head")
+    local hrp  = char:FindFirstChild("HumanoidRootPart")
+    if head and hrp and basePart == head then
+        local hv = head.AssemblyLinearVelocity
+        if typeof(hv)=="Vector3" and hv.Magnitude > 180 then return hrp end
+        local av = head.AssemblyAngularVelocity
+        if typeof(av)=="Vector3" and av.Magnitude > 25 then return hrp end
+    end
+    return basePart
+end
+local pingSec = 0
+trackConn(RunService.Heartbeat:Connect(function()
+    if LIVE.unloaded then return end
+    local ok, ms = pcall(function()
+        return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+    end)
+    if ok and typeof(ms)=="number" then pingSec = ms/1000 end
+end))
+local function predictPos(part)
+    if not CFG.PredictionEnabled then return part.Position end
+    local vel = part.AssemblyLinearVelocity
+    if typeof(vel) ~= "Vector3" then return part.Position end
+    local t = CFG.PredictionAmount + pingSec * 0.5
+    return part.Position + vel * t
+end
+
+local function findTargetBy(partName, fov, wallcheck, allowRootFallback)
+    local best,bestScore,bestPos,bestChar
+    local center=Camera.ViewportSize/2
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr~=LP and not isFriend(plr) then
+            local char=alive(plr)
+            if char then
+                local part = pickTargetPart(char, partName, allowRootFallback)
+                if part then
+                    part = resolverTarget(char, part)
+                    local predicted = predictPos(part)
+                    local sp, on = worldToScreen(predicted)
+                    if on then
+                        local d = (sp - center).Magnitude
+                        if d <= fov then
+                            local okVis = true
+                            if wallcheck then okVis = visCheck(part, char) end
+                            if okVis and (not bestScore or d < bestScore) then
+                                best, bestScore, bestPos, bestChar = part, d, predicted, char
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return best, bestPos, bestChar
+end
+local function getSilentTarget() return findTargetBy(CFG.SilentPart, CFG.SilentFOV, CFG.SilentWallcheck, CFG.SilentFallbackRoot) end
+local function getAimbotTarget() return findTargetBy(CFG.AimbotPart, CFG.AimbotFOV, CFG.AimbotWallcheck, true) end
+
+local fovCircle, fovGlow, aimFov
+if hasDrawing then
+    fovGlow   = newDraw("Circle",{Thickness=4,NumSides=72,Radius=CFG.SilentFOV,Color=BRAND.Accent,Filled=false,Transparency=0.9,Visible=false,ZIndex=1})
+    fovCircle = newDraw("Circle",{Thickness=1.2,NumSides=72,Radius=CFG.SilentFOV,Color=BRAND.Accent,Filled=false,Transparency=0.75,Visible=false,ZIndex=2})
+    aimFov    = newDraw("Circle",{Thickness=1.2,NumSides=72,Radius=CFG.AimbotFOV,Color=BRAND.Pink,Filled=false,Transparency=0.8,Visible=false,ZIndex=2})
+end
+trackConn(RunService.RenderStepped:Connect(function()
+    if LIVE.unloaded then return end
+    if fovCircle then
+        if CFG.SilentEnabled and CFG.SilentShowFOV then
+            local c=Camera.ViewportSize/2
+            fovCircle.Position,fovCircle.Radius=c,CFG.SilentFOV
+            fovGlow.Position,fovGlow.Radius=c,CFG.SilentFOV
+            local col = silentActive() and BRAND.Pink or BRAND.Accent
+            fovCircle.Color,fovGlow.Color=col,col
+            fovCircle.Visible,fovGlow.Visible=true,true
+        else fovCircle.Visible,fovGlow.Visible=false,false end
+    end
+    if aimFov then
+        if CFG.AimbotEnabled then
+            local c=Camera.ViewportSize/2
+            aimFov.Position,aimFov.Radius=c,CFG.AimbotFOV
+            aimFov.Color = aimbotActive() and BRAND.Pink or BRAND.Accent
+            aimFov.Visible=true
+        else aimFov.Visible=false end
+    end
+end))
+trackConn(RunService.RenderStepped:Connect(function(dt)
+    if LIVE.unloaded or not aimbotActive() then return end
+    local t, aimPos = getAimbotTarget(); if not t or not aimPos then return end
+    local desired = CFrame.new(Camera.CFrame.Position, aimPos)
+    local s = math.clamp(CFG.AimbotSmooth, 0, 1)
+    if s <= 0.015 then
+        Camera.CFrame = desired
+    else
+        local k = 2 + (1 - s) * 38
+        local alpha = 1 - math.exp(-k * dt)
+        Camera.CFrame = Camera.CFrame:Lerp(desired, math.clamp(alpha, 0, 1))
+    end
+end))
+
+----------------------------------------------------------------
+-- SILENT AIM HOOKS
+----------------------------------------------------------------
+local function activeSilentPos()
+    if not silentActive() then return nil end
+    local _, pos = getSilentTarget()
+    return pos
+end
+local function activeAimOrSilentPos()
+    local pos = activeSilentPos()
+    if pos then return pos end
+    if aimbotActive() then
+        local _, p2 = getAimbotTarget()
+        return p2
+    end
+    return nil
+end
+local function redirectDir(origin, direction, aimPos)
+    local len = typeof(direction)=="Vector3" and direction.Magnitude or 1000
+    if len < 1e-3 then len = 1000 end
+    local nd = aimPos - origin
+    if nd.Magnitude < 1e-3 then return direction end
+    return nd.Unit * len
+end
+local function wallbangParams(oldP)
+    if not CFG.WallbangEnabled then return oldP end
+    local p2 = RaycastParams.new()
+    p2.FilterType = Enum.RaycastFilterType.Exclude
+    p2.FilterDescendantsInstances = { LP.Character, Camera }
+    p2.IgnoreWater = true
+    return p2
+end
+
+if hookmetamethod then
+    local oldNC
+    oldNC = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+        if not LIVE.unloaded and not checkcaller() then
+            local aimPos = activeAimOrSilentPos()
+            if aimPos then
+                local m = getnamecallmethod()
+                if self == Workspace or self == workspace then
+                    if m == "Raycast" or m == "Blockcast" or m == "Spherecast" or m == "Shapecast" then
+                        local a = { ... }; local n = select("#", ...)
+                        local origin, dir = a[1], a[2]
+                        if typeof(origin) == "Vector3" and typeof(dir) == "Vector3" then
+                            a[2] = redirectDir(origin, dir, aimPos)
+                            if typeof(a[3]) == "RaycastParams" then a[3] = wallbangParams(a[3]) end
+                            return oldNC(self, table.unpack(a, 1, n))
+                        end
+                    elseif m == "FindPartOnRay" or m == "FindPartOnRayWithIgnoreList" or m == "FindPartOnRayWithWhitelist" then
+                        local a = { ... }; local n = select("#", ...)
+                        local ray = a[1]
+                        if typeof(ray) == "Ray" then
+                            local len = ray.Direction.Magnitude; if len < 1e-3 then len = 1000 end
+                            a[1] = Ray.new(ray.Origin, (aimPos - ray.Origin).Unit * len)
+                            return oldNC(self, table.unpack(a, 1, n))
+                        end
+                    end
+                end
+            end
+        end
+        return oldNC(self, ...)
+    end))
+    LIVE.hooks.namecall = oldNC
+    local oldIdx
+    oldIdx = hookmetamethod(game, "__index", newcclosure(function(self, k)
+        if not LIVE.unloaded and not checkcaller() and self == Mouse then
+            local aimPos = activeAimOrSilentPos()
+            if aimPos then
+                if k == "Hit" then
+                    local origin = Camera.CFrame.Position
+                    return CFrame.new(origin, aimPos) + (aimPos - origin)
+                elseif k == "Target" then
+                    local t = (silentActive() and select(1, getSilentTarget()))
+                        or (aimbotActive() and select(1, getAimbotTarget()))
+                    return t
+                elseif k == "UnitRay" then
+                    local o = Camera.CFrame.Position; return Ray.new(o, (aimPos - o).Unit)
+                elseif k == "Origin" then
+                    return Camera.CFrame.Position
+                elseif k == "X" then
+                    local sp = worldToScreen(aimPos); return sp.X
+                elseif k == "Y" then
+                    local sp = worldToScreen(aimPos); return sp.Y
+                end
+            end
+        end
+        return oldIdx(self, k)
+    end))
+    LIVE.hooks.index = oldIdx
+end
+if hookfunction then
+    pcall(function()
+        local realFPOR = Workspace.FindPartOnRay
+        local newFPOR
+        newFPOR = hookfunction(realFPOR, newcclosure(function(ws, ray, ignore, terrain, water)
+            if not LIVE.unloaded and not checkcaller() and typeof(ray) == "Ray" then
+                local aimPos = activeAimOrSilentPos()
+                if aimPos then
+                    local len = ray.Direction.Magnitude; if len < 1e-3 then len = 1000 end
+                    ray = Ray.new(ray.Origin, (aimPos - ray.Origin).Unit * len)
+                end
+            end
+            return newFPOR(ws, ray, ignore, terrain, water)
+        end))
+        LIVE.hooks.fpor = newFPOR
+        local realFPORI = Workspace.FindPartOnRayWithIgnoreList
+        local newFPORI
+        newFPORI = hookfunction(realFPORI, newcclosure(function(ws, ray, ignoreList, terrain, water)
+            if not LIVE.unloaded and not checkcaller() and typeof(ray) == "Ray" then
+                local aimPos = activeAimOrSilentPos()
+                if aimPos then
+                    local len = ray.Direction.Magnitude; if len < 1e-3 then len = 1000 end
+                    ray = Ray.new(ray.Origin, (aimPos - ray.Origin).Unit * len)
+                end
+            end
+            return newFPORI(ws, ray, ignoreList, terrain, water)
+        end))
+        LIVE.hooks.fpori = newFPORI
+        local realRC = Workspace.Raycast
+        local newRC
+        newRC = hookfunction(realRC, newcclosure(function(ws, origin, dir, params)
+            if not LIVE.unloaded and not checkcaller() and typeof(origin)=="Vector3" and typeof(dir)=="Vector3" then
+                local aimPos = activeAimOrSilentPos()
+                if aimPos then
+                    dir = redirectDir(origin, dir, aimPos)
+                    if typeof(params) == "RaycastParams" then params = wallbangParams(params) end
+                end
+            end
+            return newRC(ws, origin, dir, params)
+        end))
+        LIVE.hooks.rc = newRC
+    end)
+end
+
+----------------------------------------------------------------
+-- HVH MOVEMENT (unchanged)
+----------------------------------------------------------------
+local inputStates={W=false,A=false,S=false,D=false,Space=false,Shift=false}
+trackConn(UserInputService.InputBegan:Connect(function(i,gp)
+    if gp then return end
+    if i.KeyCode==Enum.KeyCode.W then inputStates.W=true end
+    if i.KeyCode==Enum.KeyCode.A then inputStates.A=true end
+    if i.KeyCode==Enum.KeyCode.S then inputStates.S=true end
+    if i.KeyCode==Enum.KeyCode.D then inputStates.D=true end
+    if i.KeyCode==Enum.KeyCode.Space then inputStates.Space=true end
+    if i.KeyCode==Enum.KeyCode.LeftShift then inputStates.Shift=true end
+end))
+trackConn(UserInputService.InputEnded:Connect(function(i)
+    if i.KeyCode==Enum.KeyCode.W then inputStates.W=false end
+    if i.KeyCode==Enum.KeyCode.A then inputStates.A=false end
+    if i.KeyCode==Enum.KeyCode.S then inputStates.S=false end
+    if i.KeyCode==Enum.KeyCode.D then inputStates.D=false end
+    if i.KeyCode==Enum.KeyCode.Space then inputStates.Space=false end
+    if i.KeyCode==Enum.KeyCode.LeftShift then inputStates.Shift=false end
+end))
+local flyVel, flyGyro
+local function killFly()
+    if flyVel then pcall(function() flyVel:Destroy() end); flyVel=nil end
+    if flyGyro then pcall(function() flyGyro:Destroy() end); flyGyro=nil end
+end
+local function ensureFly(hrp)
+    if not flyVel or flyVel.Parent ~= hrp then
+        killFly()
+        flyVel=Instance.new("BodyVelocity")
+        flyVel.MaxForce=Vector3.new(math.huge,math.huge,math.huge)
+        flyVel.Velocity=Vector3.zero; flyVel.Parent=hrp; trackInst(flyVel)
+        flyGyro=Instance.new("BodyGyro")
+        flyGyro.MaxTorque=Vector3.new(math.huge,math.huge,math.huge)
+        flyGyro.P=9000; flyGyro.D=500
+        flyGyro.CFrame=hrp.CFrame; flyGyro.Parent=hrp; trackInst(flyGyro)
+    end
+end
+trackConn(LP.CharacterAdded:Connect(function() killFly() end))
+trackConn(RunService.Heartbeat:Connect(function()
+    if LIVE.unloaded then return end
+    local char,hrp,hum=myChar(); if not char then killFly(); return end
+    if CFG.FlyEnabled then
+        ensureFly(hrp)
+        local look=Camera.CFrame.LookVector; local right=Camera.CFrame.RightVector
+        local dir=Vector3.zero
+        if inputStates.W then dir=dir+look end
+        if inputStates.S then dir=dir-look end
+        if inputStates.A then dir=dir-right end
+        if inputStates.D then dir=dir+right end
+        if inputStates.Space then dir=dir+Vector3.new(0,1,0) end
+        if inputStates.Shift then dir=dir-Vector3.new(0,1,0) end
+        if dir.Magnitude>0 then dir=dir.Unit*CFG.FlySpeed else dir=Vector3.zero end
+        flyVel.Velocity=dir; flyGyro.CFrame=Camera.CFrame; hum.PlatformStand=false
+    else killFly() end
+end))
+
+local orbitAngle, orbitTargetPlr = 0, nil
+local function pickClosestEnemy()
+    local char, myHrp = myChar(); if not char then return nil end
+    local best, bestD
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LP and not isFriend(p) then
+            local pc, phrp = alive(p)
+            if pc and phrp then
+                local d = (phrp.Position - myHrp.Position).Magnitude
+                if d <= CFG.OrbitMaxGrabDist and (not bestD or d < bestD) then
+                    best, bestD = p, d
+                end
+            end
+        end
+    end
+    return best
+end
+local function startOrbit() local t=pickClosestEnemy(); if t then orbitTargetPlr=t; CFG.OrbitEnabled=true else CFG.OrbitEnabled=false end end
+local function stopOrbit() orbitTargetPlr=nil; CFG.OrbitEnabled=false end
+trackConn(RunService.Heartbeat:Connect(function(dt)
+    if LIVE.unloaded or not CFG.OrbitEnabled or not orbitTargetPlr then return end
+    local char, hrp = myChar(); if not char then return end
+    local tc, thrp = alive(orbitTargetPlr); if not tc then stopOrbit(); return end
+    orbitAngle = (orbitAngle + CFG.OrbitSpeed * dt) % 360
+    local rad = math.rad(orbitAngle)
+    local offset = Vector3.new(math.cos(rad), 0, math.sin(rad)) * CFG.OrbitRadius
+    local goal = thrp.Position + offset + Vector3.new(0, CFG.OrbitHeight, 0)
+    pcall(function() hrp.CFrame = CFrame.new(goal, thrp.Position) end)
+end))
+
+local spinAngle, jitterToggle = 0, false
+trackConn(RunService.Heartbeat:Connect(function(dt)
+    if LIVE.unloaded then return end
+    local char,hrp=myChar(); if not char then return end
+    if CFG.SpinEnabled then
+        spinAngle=(spinAngle+CFG.SpinSpeed*dt*60)%360
+        pcall(function() hrp.CFrame=CFrame.new(hrp.Position)*CFrame.Angles(0,math.rad(spinAngle),0) end)
+    elseif CFG.AntiAimEnabled then
+        local y=0; local look=Camera.CFrame.LookVector
+        local base=math.atan2(-look.X,-look.Z)
+        if CFG.AntiAimMode=="Backwards" then y=base+math.pi
+        elseif CFG.AntiAimMode=="Jitter" then jitterToggle=not jitterToggle
+            y=base+(jitterToggle and math.pi*0.75 or -math.pi*0.75)
+        elseif CFG.AntiAimMode=="Spin" then spinAngle=(spinAngle+30*dt*60)%360; y=math.rad(spinAngle)
+        elseif CFG.AntiAimMode=="Random" then y=base+math.random()*math.pi*2 end
+        pcall(function() hrp.CFrame=CFrame.new(hrp.Position)*CFrame.Angles(0,y,0) end)
+    end
+end))
+local peekDir,peekTimer=1,0
+trackConn(RunService.Heartbeat:Connect(function(dt)
+    if LIVE.unloaded or not CFG.AutoPeekEnabled then return end
+    local char,hrp=myChar(); if not char then return end
+    peekTimer=peekTimer+dt
+    if peekTimer>0.4 then peekTimer=0; peekDir=-peekDir end
+    local right=Camera.CFrame.RightVector
+    hrp.Velocity=right*CFG.AutoPeekSpeed*peekDir+Vector3.new(0,hrp.Velocity.Y,0)
+end))
+trackConn(RunService.Heartbeat:Connect(function()
+    if LIVE.unloaded or not CFG.AirStrafeEnabled then return end
+    local char,hrp,hum=myChar(); if not char then return end
+    if hum:GetState()==Enum.HumanoidStateType.Freefall then
+        local look=Camera.CFrame.LookVector; local right=Camera.CFrame.RightVector
+        local v=hrp.Velocity
+        if inputStates.A then v=v-right*CFG.AirStrafeForce*(1/60) end
+        if inputStates.D then v=v+right*CFG.AirStrafeForce*(1/60) end
+        if inputStates.W then
+            local flat=Vector3.new(look.X,0,look.Z)
+            if flat.Magnitude>1e-3 then v=v+flat.Unit*CFG.AirStrafeForce*(1/60) end
+        end
+        hrp.Velocity=v
+    end
+end))
+trackConn(RunService.Stepped:Connect(function()
+    if LIVE.unloaded then return end
+    local char,hrp,hum=myChar(); if not char then return end
+    if CFG.AntiStompEnabled then
+        hum.PlatformStand=false
+        if hum:GetState()==Enum.HumanoidStateType.Ragdoll or hum:GetState()==Enum.HumanoidStateType.FallingDown then
+            hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end
+    end
+    if CFG.AntiVelocity then
+        local v=hrp.Velocity
+        if math.abs(v.X)>20 or math.abs(v.Z)>20 then hrp.Velocity=Vector3.new(0,v.Y,0) end
+    end
+end))
+local lagFrame=0; local lagAnchor
+trackConn(RunService.Heartbeat:Connect(function()
+    if LIVE.unloaded or not CFG.FakeLagEnabled then lagAnchor=nil; return end
+    local char,hrp=myChar(); if not char then return end
+    lagFrame=lagFrame+1
+    if lagFrame%math.max(CFG.FakeLagRate,2)==0 then lagAnchor=hrp.CFrame
+    elseif lagAnchor then pcall(function() hrp.CFrame=lagAnchor end) end
+end))
+
+----------------------------------------------------------------
+-- CUFF LOOT — Xyz PvP remote matrix
+-- Dump confirms the loot pipe lives on these ReplicatedStorage remotes:
+--   InventoryRequest (RemoteEvent) — client → server inventory ops
+--   Interact         (RemoteEvent) — client → server interactions (cuff loot)
+--   PickupNotice     (RemoteEvent) — item pickup signal
+-- Game uses a custom inventory module (InventoryLogic / CuffLogic), not Roblox Tools.
+-- Items are stacked by weapon class — "SNS", "SNSMk2", "SNSPistol", "SNSPistolBasic",
+-- "VintagePistol", "Pistol". We fire a wide (verb × arg × item) matrix in one press
+-- so stacked AND unstacked items transfer in a single server tick.
+----------------------------------------------------------------
+local lootLog = {}
+local lastLootAt = 0
+
+local function findRemote(name)
+    local r = RepStorage:FindFirstChild(name, true)
+    if r and (r:IsA("RemoteEvent") or r:IsA("RemoteFunction") or r:IsA("UnreliableRemoteEvent")) then
+        return r
+    end
+    return nil
+end
+
+local lootRemotes = {}
+local function rebuildCuffRemotes()
+    lootRemotes = {
+        InventoryRequest = findRemote("InventoryRequest"),
+        Interact         = findRemote("Interact"),
+        PickupNotice     = findRemote("PickupNotice"),
+        InventorySync    = findRemote("InventorySync"),
+    }
+end
+rebuildCuffRemotes()
+trackConn(RepStorage.DescendantAdded:Connect(function(d)
+    if d:IsA("RemoteEvent") or d:IsA("RemoteFunction") or d:IsA("UnreliableRemoteEvent") then
+        local n = d.Name
+        if n=="InventoryRequest" or n=="Interact" or n=="PickupNotice" or n=="InventorySync" then
+            rebuildCuffRemotes()
+        end
+    end
+end))
+
+local KNOWN_ITEM_NAMES = {
+    "SNS", "SNSMk2", "SNSPistol", "SNSPistolBasic",
+    "VintagePistol", "Pistol", "ClassicPistol",
+    "Ammo", "AmmoPistol", "Cash", "Money",
+}
+local VERBS = {
+    "Loot", "LootAll", "LootCuffed", "Steal", "StealAll",
+    "Take", "TakeAll", "Transfer", "TransferAll",
+    "Rob", "Strip", "StripInventory", "Grab", "Pickup",
+    "Interact", "RequestLoot", "RequestSteal",
+}
+
+local function sendBag(remote, bag)
+    if not remote then return 0 end
+    local fired = 0
+    for _, args in ipairs(bag) do
+        pcall(function()
+            if remote:IsA("RemoteEvent") or remote:IsA("UnreliableRemoteEvent") then
+                remote:FireServer(table.unpack(args))
+            elseif remote:IsA("RemoteFunction") then
+                remote:InvokeServer(table.unpack(args))
+            end
+            fired = fired + 1
+        end)
+    end
+    return fired
+end
+
+local function pushLoot(line)
+    table.insert(lootLog, 1, line)
+    if #lootLog > 60 then table.remove(lootLog) end
+end
+
+local function cuffLootMatrix(targetPlr)
+    local fired = 0
+    local char = targetPlr.Character
+    local uid  = targetPlr.UserId
+    local name = targetPlr.Name
+
+    -- Interact: cuff pipeline usually lives here. Fire every verb × every subject
+    local interactBag = {}
+    for _, verb in ipairs(VERBS) do
+        table.insert(interactBag, { verb, targetPlr })
+        table.insert(interactBag, { verb, name })
+        table.insert(interactBag, { verb, uid })
+        table.insert(interactBag, { targetPlr, verb })
+        table.insert(interactBag, { name, verb })
+        if char then
+            table.insert(interactBag, { verb, char })
+            table.insert(interactBag, { char, verb })
+        end
+    end
+    table.insert(interactBag, { targetPlr })
+    table.insert(interactBag, { name })
+    table.insert(interactBag, { uid })
+    if char then table.insert(interactBag, { char }) end
+    fired = fired + sendBag(lootRemotes.Interact, interactBag)
+
+    -- InventoryRequest: stacked + unstacked, per item, with large count
+    local invBag = {}
+    for _, verb in ipairs(VERBS) do
+        -- "take everything from X" generic shapes
+        table.insert(invBag, { verb, targetPlr })
+        table.insert(invBag, { verb, name })
+        table.insert(invBag, { verb, uid })
+        table.insert(invBag, { verb, targetPlr, true })
+        -- per-item stack strip: verb + target + item + big count
+        for _, item in ipairs(KNOWN_ITEM_NAMES) do
+            table.insert(invBag, { verb, targetPlr, item, 999 })
+            table.insert(invBag, { verb, name, item, 999 })
+            table.insert(invBag, { verb, uid, item, 999 })
+            table.insert(invBag, { verb, targetPlr, item })
+            table.insert(invBag, { item, 999, verb, targetPlr })
+        end
+    end
+    -- bare table form some servers accept: {action=, target=, item=, amount=}
+    for _, verb in ipairs(VERBS) do
+        for _, item in ipairs(KNOWN_ITEM_NAMES) do
+            table.insert(invBag, { { action=verb, target=targetPlr, item=item, amount=999 } })
+            table.insert(invBag, { { action=verb, target=name, item=item, amount=999 } })
+            table.insert(invBag, { { Action=verb, Target=targetPlr, Item=item, Amount=999 } })
+        end
+        table.insert(invBag, { { action=verb, target=targetPlr, all=true } })
+    end
+    fired = fired + sendBag(lootRemotes.InventoryRequest, invBag)
+
+    -- PickupNotice: fire bare target in case server treats it as a cuff-pickup acknowledgement
+    if lootRemotes.PickupNotice then
+        local pnBag = {}
+        for _, verb in ipairs({"Loot","Pickup","Take"}) do
+            table.insert(pnBag, { verb, targetPlr })
+            table.insert(pnBag, { targetPlr, verb })
+        end
+        fired = fired + sendBag(lootRemotes.PickupNotice, pnBag)
+    end
+
+    -- InventorySync nudge (server may push updated inventory back if we hit)
+    if lootRemotes.InventorySync then
+        pcall(function()
+            if lootRemotes.InventorySync:IsA("RemoteEvent") then
+                lootRemotes.InventorySync:FireServer()
+                lootRemotes.InventorySync:FireServer(targetPlr)
+            end
+        end)
+    end
+
+    return fired
+end
+
+local function closestLootableEnemy()
+    local char, myHrp = myChar(); if not char then return nil end
+    local best, bestD
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LP and not isFriend(p) then
+            local pc, phrp = alive(p)
+            if pc and phrp then
+                local d = (phrp.Position - myHrp.Position).Magnitude
+                if d <= CFG.LootRange and (not bestD or d < bestD) then
+                    best, bestD = p, d
+                end
+            end
+        end
+    end
+    return best, bestD
+end
+
+local Window
+
+local function doLootKey()
+    if LIVE.unloaded then return end
+    local now = tick()
+    if now - lastLootAt < CFG.LootCooldown then return end
+    lastLootAt = now
+
+    local target, dist = closestLootableEnemy()
+    if not target then
+        if CFG.LootNotify and Window then
+            Window:Notify({ Title=BRAND.Name, Text="no cuff in "..CFG.LootRange.."s", Icon="package", Duration=2.5 })
+        end
+        return
+    end
+
+    local fired = 0
+    if CFG.LootUseRemote then fired = cuffLootMatrix(target) or 0 end
+
+    local line = string.format("[%s] stripped %s @ %dm — %d calls fired across %s/%s/%s",
+        os.date("%H:%M:%S"), target.DisplayName, math.floor(dist or 0), fired,
+        lootRemotes.Interact and "Interact" or "·",
+        lootRemotes.InventoryRequest and "InventoryRequest" or "·",
+        lootRemotes.PickupNotice and "PickupNotice" or "·")
+    pushLoot(line)
+
+    if CFG.LootNotify and Window then
+        Window:Notify({
+            Title=BRAND.Name,
+            Text=string.format("stripped %s (%dm) — %d calls", target.DisplayName, math.floor(dist or 0), fired),
+            Icon="package", Duration=3
+        })
+    end
+end
+
+trackConn(UserInputService.InputBegan:Connect(function(i, gp)
+    if gp or LIVE.unloaded then return end
+    if typeof(CFG.LootKey)=="EnumItem" and i.KeyCode == CFG.LootKey then
+        doLootKey()
+    end
+end))
+
+----------------------------------------------------------------
+-- VANTIX UI — rebranded Xanax
+----------------------------------------------------------------
+Window = VantixUI:CreateWindow({
+    Title       = BRAND.Name,
+    Theme       = "Vantix",
+    AccentColor = BRAND.Accent,
+    LogoID      = BRAND.LogoID,
+    Size        = {860, 500},
+})
+
+Window:CreateTag("v2.2",         BRAND.Accent, nil, "git-branch")
+Window:CreateTag("Xyz PvP",      BRAND.Pink,   nil, "crosshair")
+Window:CreateTag(BRAND.DiscordTag, Color3.fromRGB(88,101,242), nil, nil, true)
+
+Window:Notify({ Title=BRAND.Name, Text="loaded — "..BRAND.Authors, Icon="shield-check", Duration=4 })
+
+local function flagToggle(path, label, icon, sub)
+    return function(parent)
+        return parent:AddToggle({
+            Title=label, Subtitle=sub, Icon=icon, Default=CFG[path],
+            Callback=function(state) CFG[path]=state; saveCfg() end,
+        })
+    end
+end
+
+----------------------------------------------------------------
+-- COMBAT TAB
+----------------------------------------------------------------
+local CombatTab = Window:AddTab("Combat", "crosshair")
+
+CombatTab:AddLabel("Hitbox Expander", "box")
+flagToggle("HitboxEnabled","Hitbox Expander","shield","Grow enemy hit part")(CombatTab)
+CombatTab:AddDropdown({
+    Title="Target Part", Icon="target",
+    Options={"Head","HumanoidRootPart"},
+    Default=CFG.HitboxPart=="Head" and 1 or 2,
+    Callback=function(v) CFG.HitboxPart=v; saveCfg() end,
+})
+CombatTab:AddSlider({
+    Title="Hitbox Size", Icon="maximize", Min=2, Max=50, Default=CFG.HitboxSize,
+    Callback=function(v) CFG.HitboxSize=v; saveCfg() end,
+})
+flagToggle("HitboxIgnoreDist","Ignore Distance (whole map)","globe")(CombatTab)
+CombatTab:AddSlider({
+    Title="Max Distance", Icon="ruler", Min=50, Max=10000, Default=CFG.HitboxMaxDist,
+    Callback=function(v) CFG.HitboxMaxDist=v; saveCfg() end,
+})
+flagToggle("HitboxVisual","Visible Hitbox","eye")(CombatTab)
+
+CombatTab:AddSeparator()
+CombatTab:AddLabel("Silent Aim", "crosshair")
+flagToggle("SilentEnabled","Silent Aim","target")(CombatTab)
+CombatTab:AddSlider({
+    Title="FOV", Icon="focus", Min=20, Max=400, Default=CFG.SilentFOV,
+    Callback=function(v) CFG.SilentFOV=v; saveCfg() end,
+})
+CombatTab:AddDropdown({
+    Title="Target Priority", Icon="list",
+    Options={"Head","HumanoidRootPart","Torso","UpperTorso"},
+    Default=1,
+    Callback=function(v) CFG.SilentPart=v; saveCfg() end,
+})
+flagToggle("SilentFallbackRoot","Fallback → HumanoidRootPart","shuffle","If Head is missing, use Root")(CombatTab)
+flagToggle("SilentHoldRMB","Hold RMB","mouse")(CombatTab)
+flagToggle("SilentWallcheck","Wallcheck","eye-off")(CombatTab)
+flagToggle("SilentShowFOV","Show FOV Circle","circle")(CombatTab)
+
+----------------------------------------------------------------
+-- AIMBOT TAB
+----------------------------------------------------------------
+local AimTab = Window:AddTab("Aimbot", "target")
+AimTab:AddLabel("Lock Aimbot", "focus")
+flagToggle("AimbotEnabled","Aimbot (camera lock)","target","Drags the camera onto the enemy")(AimTab)
+AimTab:AddDropdown({
+    Title="Target Part", Icon="user",
+    Options={"Head","HumanoidRootPart","Torso","UpperTorso"},
+    Default=1,
+    Callback=function(v) CFG.AimbotPart=v; saveCfg() end,
+})
+AimTab:AddSlider({
+    Title="FOV", Icon="focus", Min=20, Max=1000, Default=CFG.AimbotFOV,
+    Callback=function(v) CFG.AimbotFOV=v; saveCfg() end,
+})
+AimTab:AddSlider({
+    Title="Smoothness", Icon="activity", Min=0, Max=1, Default=CFG.AimbotSmooth,
+    Callback=function(v) CFG.AimbotSmooth=v; saveCfg() end,
+})
+flagToggle("AimbotHoldKey","Hold RMB","mouse")(AimTab)
+flagToggle("AimbotWallcheck","Wallcheck","eye-off")(AimTab)
+
+----------------------------------------------------------------
+-- HVH TAB
+----------------------------------------------------------------
+local HvHTab = Window:AddTab("HvH", "swords")
+HvHTab:AddLabel("Movement", "wind")
+flagToggle("FlyEnabled","Fly (WASD / Space / Shift)","wind")(HvHTab)
+HvHTab:AddSlider({ Title="Fly Speed", Icon="activity", Min=10, Max=500, Default=CFG.FlySpeed,
+    Callback=function(v) CFG.FlySpeed=v; saveCfg() end })
+flagToggle("AirStrafeEnabled","Air Strafe","wind")(HvHTab)
+HvHTab:AddSlider({ Title="Strafe Force", Icon="activity", Min=10, Max=200, Default=CFG.AirStrafeForce,
+    Callback=function(v) CFG.AirStrafeForce=v; saveCfg() end })
+flagToggle("AutoPeekEnabled","Auto Peek","arrow-left-right")(HvHTab)
+HvHTab:AddSlider({ Title="Peek Speed", Icon="activity", Min=5, Max=80, Default=CFG.AutoPeekSpeed,
+    Callback=function(v) CFG.AutoPeekSpeed=v; saveCfg() end })
+
+HvHTab:AddSeparator()
+HvHTab:AddLabel("Anti-Aim", "shield")
+flagToggle("SpinEnabled","Spinbot","refresh-cw")(HvHTab)
+HvHTab:AddSlider({ Title="Spin Speed", Icon="activity", Min=5, Max=200, Default=CFG.SpinSpeed,
+    Callback=function(v) CFG.SpinSpeed=v; saveCfg() end })
+flagToggle("AntiAimEnabled","Anti-Aim","shield")(HvHTab)
+HvHTab:AddDropdown({
+    Title="Anti-Aim Mode", Icon="list",
+    Options={"Backwards","Jitter","Spin","Random"},
+    Default=1,
+    Callback=function(v) CFG.AntiAimMode=v; saveCfg() end,
+})
+flagToggle("FakeLagEnabled","Fake Lag","wifi-off")(HvHTab)
+HvHTab:AddSlider({ Title="Fake Lag Rate", Icon="activity", Min=2, Max=20, Default=CFG.FakeLagRate,
+    Callback=function(v) CFG.FakeLagRate=v; saveCfg() end })
+
+HvHTab:AddSeparator()
+HvHTab:AddLabel("Shot Logic", "crosshair")
+flagToggle("WallbangEnabled","Wallbang","square-slash")(HvHTab)
+flagToggle("PredictionEnabled","Prediction","trending-up")(HvHTab)
+HvHTab:AddSlider({ Title="Prediction Amount (s)", Icon="clock", Min=0, Max=1, Default=CFG.PredictionAmount,
+    Callback=function(v) CFG.PredictionAmount=v; saveCfg() end })
+flagToggle("ResolverEnabled","Resolver","brain")(HvHTab)
+
+HvHTab:AddSeparator()
+HvHTab:AddLabel("Survival", "heart")
+flagToggle("AntiStompEnabled","Anti-Stomp / Ragdoll","shield-check")(HvHTab)
+flagToggle("AntiVelocity","Anti-Velocity Push","shield-check")(HvHTab)
+
+----------------------------------------------------------------
+-- ORBIT TAB
+----------------------------------------------------------------
+local OrbitTab = Window:AddTab("Orbit", "orbit")
+OrbitTab:AddLabel("Grab Nearest", "target")
+
+local orbitStatus = OrbitTab:AddLabel("Target: <none>", "user")
+
+OrbitTab:AddKeybind({
+    Title="Orbit Key", Subtitle="Press near an enemy to grab + orbit, press again to drop",
+    Icon="keyboard", Default=CFG.OrbitBindKey,
+    Callback=function()
+        if CFG.OrbitEnabled then stopOrbit() else startOrbit() end
+    end,
+})
+OrbitTab:AddSlider({ Title="Max Grab Distance", Icon="ruler", Min=10, Max=200, Default=CFG.OrbitMaxGrabDist,
+    Callback=function(v) CFG.OrbitMaxGrabDist=v; saveCfg() end })
+OrbitTab:AddSeparator()
+OrbitTab:AddLabel("Shape", "circle")
+OrbitTab:AddSlider({ Title="Radius", Icon="circle", Min=2, Max=60, Default=CFG.OrbitRadius,
+    Callback=function(v) CFG.OrbitRadius=v; saveCfg() end })
+OrbitTab:AddSlider({ Title="Speed (deg/s)", Icon="activity", Min=10, Max=720, Default=CFG.OrbitSpeed,
+    Callback=function(v) CFG.OrbitSpeed=v; saveCfg() end })
+OrbitTab:AddSlider({ Title="Height Offset", Icon="move-vertical", Min=-20, Max=20, Default=CFG.OrbitHeight,
+    Callback=function(v) CFG.OrbitHeight=v; saveCfg() end })
+
+trackConn(RunService.Heartbeat:Connect(function()
+    if LIVE.unloaded or not orbitStatus then return end
+    if orbitTargetPlr and orbitTargetPlr.Parent then
+        pcall(function() orbitStatus:Set("Target: " .. orbitTargetPlr.DisplayName) end)
+    else
+        pcall(function() orbitStatus:Set("Target: <none>") end)
+    end
+end))
+
+----------------------------------------------------------------
+-- LOOT TAB — single-key cuff strip (stacked + unstacked)
+----------------------------------------------------------------
+local LootTab = Window:AddTab("Loot", "package")
+LootTab:AddLabel("One-Key Cuff Strip", "package")
+LootTab:AddLabel("Fires InventoryRequest + Interact + PickupNotice", "zap")
+
+LootTab:AddKeybind({
+    Title="Loot Key", Subtitle="Strips closest cuffed enemy in range (default: 3)",
+    Icon="keyboard", Default=CFG.LootKey,
+    Callback=function(key)
+        if typeof(key)=="EnumItem" then CFG.LootKey = key; saveCfg() end
+        doLootKey()
+    end,
+})
+
+flagToggle("LootUseRemote","Fire Remote Matrix","zap","Verb × arg × item sweep over the 3 game remotes")(LootTab)
+flagToggle("LootNotify","Notify on Loot","bell")(LootTab)
+LootTab:AddSlider({ Title="Loot Range (studs)", Icon="ruler", Min=5, Max=200, Default=CFG.LootRange,
+    Callback=function(v) CFG.LootRange=v; saveCfg() end })
+LootTab:AddSlider({ Title="Cooldown (s)", Icon="clock", Min=0, Max=5, Default=CFG.LootCooldown,
+    Callback=function(v) CFG.LootCooldown=v; saveCfg() end })
+
+LootTab:AddButton({
+    Title="Rebind Remotes", Subtitle="Rescan for InventoryRequest / Interact / PickupNotice",
+    Icon="refresh-cw", Text="Rebind",
+    Callback=function()
+        rebuildCuffRemotes()
+        local found = 0
+        for _,v in pairs(lootRemotes) do if v then found = found + 1 end end
+        Window:Notify({ Title=BRAND.Name, Text=string.format("bound %d/4 cuff remotes", found), Duration=3 })
+    end,
+})
+LootTab:AddButton({
+    Title="Strip Closest Now", Subtitle="Fires the key action without the hotkey",
+    Icon="hand", Text="Strip",
+    Callback=doLootKey,
+})
+
+local lootConsole = LootTab:AddConsole({ Title="Loot Log", Height=110 })
+trackConn(RunService.Heartbeat:Connect(function()
+    if LIVE.unloaded or not lootConsole then return end
+    while #lootLog > 0 do
+        local line = table.remove(lootLog)
+        pcall(function() lootConsole:Write(line) end)
+    end
+end))
+
+----------------------------------------------------------------
+-- VISUAL TAB
+----------------------------------------------------------------
+local VisualTab = Window:AddTab("Visuals", "eye")
+VisualTab:AddLabel("ESP", "eye")
+flagToggle("ESPEnabled","Master","eye")(VisualTab)
+flagToggle("ESPNames","Names + Distance","user")(VisualTab)
+flagToggle("ESPTracers","Tracers","move")(VisualTab)
+flagToggle("ESPHealthBar","Health Bars","heart")(VisualTab)
+VisualTab:AddSeparator()
+VisualTab:AddLabel("Style", "palette")
+flagToggle("ESPCorners","Corner Brackets","square")(VisualTab)
+flagToggle("ESPGlow","Soft Glow","sun")(VisualTab)
+flagToggle("ESPArrows","Off-Screen Arrows","arrow-up-right")(VisualTab)
+VisualTab:AddSeparator()
+flagToggle("ESPTeamCheck","Team Check","users")(VisualTab)
+VisualTab:AddSlider({
+    Title="Max Distance", Icon="ruler", Min=100, Max=10000, Default=CFG.ESPMaxDist,
+    Callback=function(v) CFG.ESPMaxDist=v; saveCfg() end,
+})
+
+----------------------------------------------------------------
+-- SETTINGS TAB
+----------------------------------------------------------------
+local SettingsTab = Window:AddTab("Settings", "settings")
+
+local themeNames = {}
+for name in pairs(VantixUI.Themes) do table.insert(themeNames, name) end
+table.sort(themeNames)
+SettingsTab:AddDropdown({
+    Title="Theme", Icon="swatch-book", Options=themeNames,
+    Default=Window:GetTheme(),
+    Callback=function(v) Window:SetTheme(v) end,
+})
+
+SettingsTab:AddToggleKey({ Title="UI Toggle Key", Subtitle="Hides / shows the panel", Icon="keyboard" })
+
+SettingsTab:AddSeparator()
+SettingsTab:AddLabel(BRAND.Authors, "shield")
+SettingsTab:AddLabel(BRAND.Sub, "sparkles")
+SettingsTab:AddButton({
+    Title="Discord", Subtitle=BRAND.DiscordTag,
+    Icon="message-circle", Text="Copy",
+    Callback=function()
+        if setclipboard then setclipboard(BRAND.Discord) end
+        Window:Notify({ Title=BRAND.Name, Text="Copied "..BRAND.DiscordTag, Duration=3 })
+    end,
+})
+
+SettingsTab:AddSeparator()
+
+local function fullUnload()
+    if LIVE.unloaded then return end
+    LIVE.unloaded = true
+    pcall(saveCfg)
+    for _, c in ipairs(LIVE.conns) do pcall(function() c:Disconnect() end) end
+    LIVE.conns = {}
+    pcall(restoreAll)
+    for plr,_ in pairs(espState) do pcall(killEsp, plr) end
+    espState = {}
+    for _, d in ipairs(LIVE.drawings) do pcall(function() d:Remove() end) end
+    LIVE.drawings = {}
+    for _, i in ipairs(LIVE.instances) do pcall(function() i:Destroy() end) end
+    LIVE.instances = {}
+    killFly()
+    pcall(function() Window:Destroy() end)
+    hbState = {}
+    if getgenv then pcall(function() getgenv().XanaxUnload = nil end) end
+end
+
+SettingsTab:AddButton({
+    Title="Unload", Subtitle="Tear down hooks, drawings, body movers, UI", Risky=true,
+    Icon="log-out", Text="Unload",
+    Callback=fullUnload,
+})
+
+if getgenv then getgenv().XanaxUnload = fullUnload end
+
+print(string.format("[%s] loaded — %s — %s", BRAND.Name, BRAND.Authors, BRAND.Discord))
